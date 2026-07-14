@@ -2,6 +2,8 @@ import {Octokit} from "@octokit/core";
 import express, {NextFunction, Request, Response} from "express";
 import {Webhook, WebhookUnbrandedRequiredHeaders, WebhookVerificationError} from "standardwebhooks"
 import {RenderDeploy, RenderEvent, RenderService, WebhookPayload} from "./render";
+import {StripePaymentProcessor, PaymentRequest} from "./stripe";
+import Stripe from "stripe";
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -33,9 +35,27 @@ if (!githubAPIToken || !githubOwnerName || !githubRepoName) {
 
 const githubWorkflowID = process.env.GITHUB_WORKFLOW_ID || 'example.yaml';
 
+// Initialize Stripe Payment Processor
+const stripeAPIKey = process.env.STRIPE_API_KEY || '';
+const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+
+if (!stripeAPIKey) {
+    console.error("Error: STRIPE_API_KEY is not set.");
+    process.exit(1);
+}
+
+if (!stripeWebhookSecret) {
+    console.error("Error: STRIPE_WEBHOOK_SECRET is not set.");
+    process.exit(1);
+}
+
+const stripeProcessor = new StripePaymentProcessor(stripeAPIKey, stripeWebhookSecret);
+
 const octokit = new Octokit({
     auth: githubAPIToken
 })
+
+app.use(express.json());
 
 app.post("/webhook", express.raw({type: 'application/json'}), (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -64,6 +84,214 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 app.get('/', (req: Request, res: Response) => {
   res.send('Render Webhook GitHub Action is listening!')
 })
+
+// ============ STRIPE PAYMENT ENDPOINTS ============
+
+/**
+ * GET /payment/methods
+ * Get available instant payment methods
+ */
+app.get('/payment/methods', (req: Request, res: Response) => {
+    try {
+        const methods = stripeProcessor.getAvailableInstantPaymentMethods();
+        res.status(200).json({
+            success: true,
+            methods
+        });
+    } catch (error) {
+        console.error('Error fetching payment methods:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch payment methods'
+        });
+    }
+});
+
+/**
+ * POST /payment/create
+ * Create an instant payment intent
+ * Body: { amount, currency, email?, name?, description?, metadata? }
+ */
+app.post('/payment/create', async (req: Request, res: Response) => {
+    try {
+        const { amount, currency, email, name, description, metadata } = req.body;
+
+        if (!amount || !currency) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields: amount, currency'
+            });
+        }
+
+        // Get or create customer if email provided
+        let customerId: string | undefined;
+        if (email) {
+            customerId = await stripeProcessor.getOrCreateCustomer(email, name || email);
+        }
+
+        const paymentRequest: PaymentRequest = {
+            amount: Math.round(amount * 100), // Convert to cents
+            currency,
+            customerId,
+            description: description || 'Instant Payment',
+            paymentMethodTypes: ['us_bank_account', 'card', 'ideal', 'bancontact', 'sofort'],
+            metadata
+        };
+
+        const paymentIntent = await stripeProcessor.createInstantPayment(paymentRequest);
+
+        res.status(200).json({
+            success: true,
+            paymentIntent
+        });
+    } catch (error) {
+        console.error('Error creating payment:', error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to create payment'
+        });
+    }
+});
+
+/**
+ * POST /payment/confirm
+ * Confirm a payment intent with a payment method
+ * Body: { paymentIntentId, paymentMethodId }
+ */
+app.post('/payment/confirm', async (req: Request, res: Response) => {
+    try {
+        const { paymentIntentId, paymentMethodId } = req.body;
+
+        if (!paymentIntentId || !paymentMethodId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields: paymentIntentId, paymentMethodId'
+            });
+        }
+
+        const paymentIntent = await stripeProcessor.confirmPayment(paymentIntentId, paymentMethodId);
+
+        res.status(200).json({
+            success: true,
+            paymentIntent
+        });
+    } catch (error) {
+        console.error('Error confirming payment:', error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to confirm payment'
+        });
+    }
+});
+
+/**
+ * GET /payment/status/:paymentIntentId
+ * Get the status of a payment intent
+ */
+app.get('/payment/status/:paymentIntentId', async (req: Request, res: Response) => {
+    try {
+        const { paymentIntentId } = req.params;
+
+        const paymentIntent = await stripeProcessor.getPaymentIntent(paymentIntentId);
+
+        res.status(200).json({
+            success: true,
+            paymentIntent
+        });
+    } catch (error) {
+        console.error('Error fetching payment status:', error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to fetch payment status'
+        });
+    }
+});
+
+/**
+ * POST /payment/cancel/:paymentIntentId
+ * Cancel a payment intent
+ */
+app.post('/payment/cancel/:paymentIntentId', async (req: Request, res: Response) => {
+    try {
+        const { paymentIntentId } = req.params;
+
+        const paymentIntent = await stripeProcessor.cancelPayment(paymentIntentId);
+
+        res.status(200).json({
+            success: true,
+            paymentIntent
+        });
+    } catch (error) {
+        console.error('Error canceling payment:', error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to cancel payment'
+        });
+    }
+});
+
+/**
+ * POST /webhook/stripe
+ * Handle Stripe webhook events
+ */
+app.post('/webhook/stripe', express.raw({type: 'application/json'}), async (req: Request, res: Response, next: NextFunction) => {
+    const signature = req.headers['stripe-signature'] as string;
+
+    try {
+        const event = stripeProcessor.verifyWebhookSignature(
+            typeof req.body === 'string' ? req.body : JSON.stringify(req.body),
+            signature
+        );
+
+        console.log(`Received Stripe webhook event: ${event.type}`);
+
+        // Handle specific event types
+        switch (event.type) {
+            case 'payment_intent.succeeded':
+                await stripeProcessor.handlePaymentSucceeded(event);
+                break;
+            case 'payment_intent.payment_failed':
+                await stripeProcessor.handlePaymentFailed(event);
+                break;
+            case 'charge.succeeded':
+                await stripeProcessor.handleChargeSucceeded(event);
+                break;
+            default:
+                console.log(`Unhandled Stripe event type: ${event.type}`);
+        }
+
+        res.status(200).json({ received: true });
+    } catch (error) {
+        console.error('Webhook signature verification failed:', error);
+        res.status(400).send('Webhook Error: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+});
+
+/**
+ * GET /payment-success
+ * Redirect page after successful instant payment
+ */
+app.get('/payment-success', (req: Request, res: Response) => {
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Payment Successful</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                .success { color: green; font-size: 24px; }
+            </style>
+        </head>
+        <body>
+            <div class="success">✓ Payment Successful!</div>
+            <p>Your instant payment has been processed successfully.</p>
+            <a href="/">Back to Home</a>
+        </body>
+        </html>
+    `);
+});
+
+// ============ END STRIPE ENDPOINTS ============
 
 const server = app.listen(port, () => console.log(`Example app listening on port ${port}!`));
 

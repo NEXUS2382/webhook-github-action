@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instant Payment - Stripe Integration</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+
+        .header {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .payment-methods {
+            margin-bottom: 20px;
+        }
+
+        .payment-methods label {
+            display: block;
+            margin-bottom: 10px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .method-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .method-option {
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s;
+        }
+
+        .method-option:hover {
+            border-color: #667eea;
+            background-color: #f5f5f5;
+        }
+
+        .method-option input[type="radio"] {
+            display: none;
+        }
+
+        .method-option input[type="radio"]:checked + .method-label {
+            color: #667eea;
+        }
+
+        .method-option input[type="radio"]:checked {
+            border-color: #667eea;
+            background-color: #f0f0ff;
+        }
+
+        .method-label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            cursor: pointer;
+        }
+
+        #payment-element {
+            margin-bottom: 20px;
+        }
+
+        .amount-display {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .amount-display .label {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+
+        .amount-display .amount {
+            font-size: 28px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #d0d0d0;
+        }
+
+        .message {
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+
+        .message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #999;
+        }
+
+        .stripe-logo {
+            height: 20px;
+            margin-top: 10px;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+
+            .method-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💳 Instant Payment</h1>
+            <p>Fast and secure payments with instant payment methods</p>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <form id="payment-form">
+            <!-- Customer Information -->
+            <div class="form-group">
+                <label for="email">Email Address *</label>
+                <input type="email" id="email" name="email" required placeholder="john@example.com">
+            </div>
+
+            <div class="form-group">
+                <label for="name">Full Name</label>
+                <input type="text" id="name" name="name" placeholder="John Doe">
+            </div>
+
+            <!-- Amount Selection -->
+            <div class="form-group">
+                <label for="amount">Amount *</label>
+                <div style="display: flex; gap: 10px;">
+                    <input type="number" id="amount" name="amount" min="1" max="9999.99" step="0.01" value="99.99" required>
+                    <select id="currency" name="currency" style="flex: 0 0 100px;">
+                        <option value="USD">USD</option>
+                        <option value="EUR">EUR</option>
+                        <option value="GBP">GBP</option>
+                        <option value="CAD">CAD</option>
+                        <option value="AUD">AUD</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Amount Display -->
+            <div class="amount-display">
+                <div class="label">Total Amount</div>
+                <div class="amount"><span id="display-amount">$99.99</span> <span id="display-currency">USD</span></div>
+            </div>
+
+            <!-- Payment Element -->
+            <div id="payment-element"></div>
+
+            <!-- Payment Instructions -->
+            <div style="background: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px; font-size: 13px; color: #666;">
+                <strong>Supported Instant Payment Methods:</strong>
+                <ul style="margin-left: 20px; margin-top: 10px;">
+                    <li>ACH Direct Debit (US)</li>
+                    <li>iDEAL (Netherlands)</li>
+                    <li>Bancontact (Belgium)</li>
+                    <li>SOFORT (Europe)</li>
+                    <li>Credit/Debit Cards</li>
+                </ul>
+            </div>
+
+            <!-- Submit Button -->
+            <div class="button-group">
+                <button type="submit" class="btn-primary" id="submit-btn">
+                    Pay <span id="payment-amount">$99.99</span>
+                </button>
+                <button type="reset" class="btn-secondary">Clear</button>
+            </div>
+
+            <!-- Loading State -->
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="margin-top: 10px; color: #666;">Processing payment...</p>
+            </div>
+        </form>
+
+        <div class="footer">
+            <p>Your payment is secured by Stripe</p>
+            <p style="margin-top: 5px; color: #ccc;">Test mode - Use test payment methods</p>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const STRIPE_PUBLISHABLE_KEY = 'pk_test_YOUR_PUBLISHABLE_KEY_HERE'; // Replace with your key
+        const API_URL = window.location.origin;
+
+        let stripe;
+        let elements;
+        let paymentElement;
+        let paymentIntentId;
+
+        // Initialize Stripe
+        async function initializeStripe() {
+            stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+            elements = stripe.elements();
+            paymentElement = elements.create('payment', {
+                layout: 'accordion'
+            });
+            paymentElement.mount('#payment-element');
+        }
+
+        // Update display amount
+        function updateDisplayAmount() {
+            const amount = document.getElementById('amount').value;
+            const currency = document.getElementById('currency').value;
+            document.getElementById('display-amount').textContent = `${currency === 'USD' ? '$' : ''}${parseFloat(amount).toFixed(2)}`;
+            document.getElementById('display-currency').textContent = currency;
+            document.getElementById('payment-amount').textContent = `${currency === 'USD' ? '$' : ''}${parseFloat(amount).toFixed(2)}`;
+        }
+
+        // Show message
+        function showMessage(message, type = 'info') {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = message;
+            messageEl.className = `message ${type}`;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Hide loading
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('submit-btn').disabled = false;
+        }
+
+        // Show loading
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('submit-btn').disabled = true;
+        }
+
+        // Create payment intent
+        async function createPaymentIntent() {
+            const email = document.getElementById('email').value;
+            const name = document.getElementById('name').value;
+            const amount = parseFloat(document.getElementById('amount').value);
+            const currency = document.getElementById('currency').value;
+
+            try {
+                const response = await fetch(`${API_URL}/payment/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        amount,
+                        currency,
+                        email,
+                        name: name || email,
+                        description: 'Instant Payment',
+                        metadata: {
+                            timestamp: new Date().toISOString()
+                        }
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to create payment');
+                }
+
+                paymentIntentId = data.paymentIntent.id;
+                showMessage('Payment intent created. Select your payment method.', 'info');
+                return true;
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // Handle form submission
+        document.getElementById('payment-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            showLoading();
+
+            try {
+                // Validate email
+                const email = document.getElementById('email').value;
+                if (!email) {
+                    showMessage('Email address is required', 'error');
+                    hideLoading();
+                    return;
+                }
+
+                // Create payment intent
+                const created = await createPaymentIntent();
+                if (!created) {
+                    hideLoading();
+                    return;
+                }
+
+                // Confirm payment with Stripe
+                const { error, paymentIntent } = await stripe.confirmPayment({
+                    elements,
+                    redirect: 'if_required'
+                });
+
+                if (error) {
+                    showMessage(`Payment failed: ${error.message}`, 'error');
+                    hideLoading();
+                } else if (paymentIntent.status === 'succeeded') {
+                    showMessage('✓ Payment successful! Processing your request...', 'success');
+                    // Redirect after delay
+                    setTimeout(() => {
+                        window.location.href = '/payment-success';
+                    }, 2000);
+                } else if (paymentIntent.status === 'requires_action') {
+                    showMessage('Please complete the additional authentication required.', 'info');
+                    hideLoading();
+                } else {
+                    showMessage(`Payment status: ${paymentIntent.status}`, 'info');
+                    hideLoading();
+                }
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+                hideLoading();
+            }
+        });
+
+        // Update amount display on change
+        document.getElementById('amount').addEventListener('change', updateDisplayAmount);
+        document.getElementById('currency').addEventListener('change', updateDisplayAmount);
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeStripe();
+            updateDisplayAmount();
+        });
+    </script>
+</body>
+</html>
