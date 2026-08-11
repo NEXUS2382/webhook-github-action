@@ -17,5 +17,7 @@ services:
   - key: GITHUB_API_TOKEN
     sync: false
   region: oregon
+  nodeVersion: 20.x.x
+  healthCheckPath: /
   buildCommand: pnpm install && pnpm run build
   startCommand: pnpm run start
